@@ -1344,14 +1344,14 @@ static int open_send_broadcast(int port, const char* buf, int size)
     struct sockaddr_in remote_addr;
 
     if ((ask_fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
-        log_perror("open_send_broadcast socket");
+        log_perror("open_send_broadcast: Failed to create a UDP Broadcast socket");
         return -1;
     }
 
     if (fcntl(ask_fd, F_SETFD, FD_CLOEXEC) < 0) {
-        log_perror("open_send_broadcast fcntl");
+        log_perror("open_send_broadcast: Failed to set file descriptor to FD_CLOEXEC");
         if (-1 == close(ask_fd)){
-            log_perror("close failed");
+            log_perror("open_send_broadcast: Failed to close file descriptor");
         }
         return -1;
     }
@@ -1359,9 +1359,9 @@ static int open_send_broadcast(int port, const char* buf, int size)
     int optval = 1;
 
     if (setsockopt(ask_fd, SOL_SOCKET, SO_BROADCAST, &optval, sizeof(optval)) < 0) {
-        log_perror("open_send_broadcast setsockopt");
+        log_perror("open_send_broadcast: Failed to set broadcast flag on UDP socket");
         if (-1 == close(ask_fd)){
-            log_perror("close failed");
+            log_perror("open_send_broadcast: Failed to close file descriptor");
         }
         return -1;
     }
@@ -1414,7 +1414,7 @@ static int open_send_broadcast(int port, const char* buf, int size)
 
             if (sendto(ask_fd, buf, size, 0, (struct sockaddr *)&remote_addr,
                        sizeof(remote_addr)) != size) {
-                log_perror("open_send_broadcast sendto");
+                log_perror("open_send_broadcast: Send data on datagram");
             }
         }
     }

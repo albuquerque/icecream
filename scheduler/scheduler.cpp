@@ -1541,7 +1541,7 @@ static bool handle_line(CompileServer *cs, Msg *_m)
     return cs->send_msg(TextMsg(string("200 done")));
 }
 
-// return false if some error occurred, leaves C open.  */
+// return false if some error occurred, leaves CompileServer open.  */
 static bool try_login(CompileServer *cs, Msg *m)
 {
     bool ret = true;
@@ -1584,7 +1584,7 @@ static bool handle_end(CompileServer *toremove, Msg *m)
         assert(find(monitors.begin(), monitors.end(), toremove) != monitors.end());
         monitors.remove(toremove);
 #if DEBUG_SCHEDULER > 1
-        trace() << "handle_end(moni) " << monitors.size() << endl;
+        trace() << "handle_end(monitor) " << monitors.size() << endl;
 #endif
         break;
     case CompileServer::DAEMON:
@@ -1739,14 +1739,14 @@ static int open_broad_listener(int port)
     struct sockaddr_in myaddr;
 
     if ((listen_fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
-        log_perror("socket()");
+        log_perror("Failed to open Datagram Socket for listening");
         return -1;
     }
 
     int optval = 1;
 
     if (setsockopt(listen_fd, SOL_SOCKET, SO_BROADCAST, &optval, sizeof(optval)) < 0) {
-        log_perror("setsockopt()");
+        log_perror("Failed to set socket options on Brodcast listen socket");
         return -1;
     }
 
@@ -1755,7 +1755,7 @@ static int open_broad_listener(int port)
     myaddr.sin_addr.s_addr = INADDR_ANY;
 
     if (::bind(listen_fd, (struct sockaddr *) &myaddr, sizeof(myaddr)) < 0) {
-        log_perror("bind()");
+        log_perror("Failed to bind broadcast socket to interface");
         return -1;
     }
 
@@ -1768,14 +1768,14 @@ static int open_tcp_listener(short port)
     struct sockaddr_in myaddr;
 
     if ((fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        log_perror("socket()");
+        log_perror("Failed top open TCP listener socket");
         return -1;
     }
 
     int optval = 1;
 
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
-        log_perror("setsockopt()");
+        log_perror("Failed to set options on the TCP Listener Socket");
         return -1;
     }
 
@@ -1783,7 +1783,7 @@ static int open_tcp_listener(short port)
        possible network errors making accept() block although select() said
        there was some activity.  */
     if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-        log_perror("fcntl()");
+        log_perror("Failed to set File Status flag to O_NONBLOCK on TCP listen socket");
         return -1;
     }
 
@@ -1792,12 +1792,12 @@ static int open_tcp_listener(short port)
     myaddr.sin_addr.s_addr = INADDR_ANY;
 
     if (::bind(fd, (struct sockaddr *) &myaddr, sizeof(myaddr)) < 0) {
-        log_perror("bind()");
+        log_perror("Failed to bind TCP listen socket to address");
         return -1;
     }
 
     if (listen(fd, 10) < 0) {
-        log_perror("listen()");
+        log_perror("Failed to mark TCP socket for listening to incoming connections");
         return -1;
     }
 
@@ -2135,14 +2135,14 @@ int main(int argc, char *argv[])
         }
 
         FD_SET(broad_fd, &read_set);
-
+        /* fd2cs is a map of CompileServers */
         for (map<int, CompileServer *>::const_iterator it = fd2cs.begin(); it != fd2cs.end();) {
             int i = it->first;
             CompileServer *cs = it->second;
             bool ok = true;
             ++it;
 
-            /* handle_activity() can delete c and make the iterator
+            /* handle_activity() can delete a CompileServer and make the iterator
                invalid.  */
             while (ok && cs->has_msg()) {
                 if (!handle_activity(cs)) {
@@ -2160,6 +2160,7 @@ int main(int argc, char *argv[])
         }
 
         list<CompileServer *> cs_in_tsts;
+        /*css is a list of CompileServers*/
         for (list<CompileServer *>::iterator it = css.begin(); it != css.end(); ++it)
         {
             if ((*it)->getConnectionInProgress())
@@ -2177,14 +2178,13 @@ int main(int argc, char *argv[])
 
         int active_fds = select(max_fd + 1, &read_set, &write_set, NULL, &tv);
 
+        reset_debug_if_needed(); // we possibly got SIGHUP
         if (active_fds < 0 && errno == EINTR) {
-            reset_debug_if_needed(); // we possibly got SIGHUP
             continue;
         }
-        reset_debug_if_needed();
 
         if (active_fds < 0) {
-            log_perror("select()");
+            log_perror("No active file descriptors available in read and write sets");
             return 1;
         }
 
@@ -2202,23 +2202,25 @@ int main(int argc, char *argv[])
                     pending_connections = false;
                 }
 
-                if (remote_fd < 0 && errno != EAGAIN && errno != EINTR
-                        && errno != EWOULDBLOCK) {
-                    log_perror("accept()");
-                    /* don't quit because of ECONNABORTED, this can happen during
-                     * floods  */
-                }
+                // if (remote_fd < 0 && errno != EAGAIN && errno != EINTR
+                //         && errno != EWOULDBLOCK) {
+                //     log_perror("accept()");
+                //     /* don't quit because of ECONNABORTED, this can happen during
+                //      * floods  */
+                // }
 
                 if (remote_fd >= 0) {
                     CompileServer *cs = new CompileServer(remote_fd, (struct sockaddr *) &remote_addr, remote_len, false);
-                    trace() << "accepted " << cs->name << endl;
+                    trace() << "CompileServer accepted " << cs->name << endl;
                     cs->last_talk = time(0);
 
                     if (!cs->protocol) { // protocol mismatch
+                        trace() << "Deleted CompileServer " << cs->name << " protocol mismatch." << endl;
                         delete cs;
                         continue;
                     }
 
+                    //Add to CompileServer map
                     fd2cs[cs->fd] = cs;
 
                     while (!cs->read_a_bit() || cs->has_msg()) {
@@ -2239,11 +2241,11 @@ int main(int argc, char *argv[])
                                (struct sockaddr *) &remote_addr,
                                &remote_len);
 
-            if (remote_fd < 0 && errno != EAGAIN && errno != EINTR) {
-                log_perror("accept()");
-                /* Don't quit the scheduler just because a debugger couldn't
-                   connect.  */
-            }
+            // if (remote_fd < 0 && errno != EAGAIN && errno != EINTR) {
+            //     log_perror("accept()");
+            //     /* Don't quit the scheduler just because a debugger couldn't
+            //        connect.  */
+            // }
 
             if (remote_fd >= 0) {
                 CompileServer *cs = new CompileServer(remote_fd, (struct sockaddr *) &remote_addr, remote_len, true);
@@ -2273,7 +2275,7 @@ int main(int argc, char *argv[])
                     &broad_len);
             if (buflen < 0 || buflen > Broadcasts::BROAD_BUFLEN){
                 int err = errno;
-                log_perror("recvfrom()");
+                // log_perror("Received data from " + inet_ntoa(broad_addr.sin_addr));
 
                 /* Some linux 2.6 kernels can return from select with
                    data available, and then return from read() with EAGAIN
@@ -2294,7 +2296,8 @@ int main(int argc, char *argv[])
                     int reply_len = DiscoverSched::prepareBroadcastReply(buf, netname, starttime);
                     if (sendto(broad_fd, buf, reply_len, 0,
                                 (struct sockaddr *) &broad_addr, broad_len) != reply_len) {
-                        log_perror("sendto()");
+                        log_perror("Failed to send Brodacast reply");
+                        // log_perror("Brodcast Message "+ buf);
                     }
                 }
             }
@@ -2349,10 +2352,10 @@ int main(int argc, char *argv[])
     while (!monitors.empty())
         handle_end(monitors.front(), NULL);
     if ((-1 == close(broad_fd)) && (errno != EBADF)){
-        log_perror("close failed");
+        log_perror("Failed to close UDP Broadcast");
     }
     if (-1 == unlink(pidFilePath.c_str()) && errno != ENOENT){
-        log_perror("unlink failed") << "\t" << pidFilePath << endl;
+        log_perror("Failed to unling PID file") << "\t" << pidFilePath << endl;
     }
     return 0;
 }
