@@ -667,40 +667,13 @@ size_t remove_environment(const string &basename, const string &env)
 
     size_t res = sumup_dir(dirname);
 
-    flush_debug();
-    pid_t pid = fork();
-
-    if (pid == -1) {
-        log_perror("failed to fork");
-        return 0;
+    trace()<<"Removing directory: "<< dirname.c_str() <<endl;
+    if (cleanup_directory(dirname) && rmdir(dirname.c_str())){
+        trace() << "Removed direcotry: "<< dirname.c_str() << endl;
+        return res;
     }
 
-    if (pid) {
-        int status = 0;
-
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR);
-
-        if (WIFEXITED(status)) {
-            return res;
-        }
-
-        // something went wrong. assume no disk space was free'd.
-        return 0;
-    }
-
-    // else
-
-    char **argv;
-    argv = new char*[5];
-    argv[0] = strdup("/bin/rm");
-    argv[1] = strdup("-rf");
-    argv[2] = strdup("--");
-    argv[3] = strdup(dirname.c_str());
-    argv[4] = NULL;
-
-    execv(argv[0], argv);
-    log_perror("execv failed");
-    _exit(-1);
+    return 0;
 }
 
 size_t remove_native_environment(const string &env)
